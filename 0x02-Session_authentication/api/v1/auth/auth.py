@@ -3,6 +3,7 @@
 """This module implements base class for Authentication mechanisms."""
 
 from typing import List, TypeVar, Union
+from os import getenv
 
 User = TypeVar("User")
 
@@ -36,3 +37,14 @@ class Auth:
     def current_user(self, request=None) -> User:
         """Return the current user."""
         return None
+
+    def session_cookie(self, request=None) -> Union[str, None]:
+        """Return the value of the session cookie from the request."""
+        if request is None:
+            return None
+
+        session_name = getenv("SESSION_NAME")
+        if session_name is None:
+            return None
+
+        return request.cookies.get(session_name)
