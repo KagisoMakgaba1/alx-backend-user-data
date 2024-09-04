@@ -1,94 +1,57 @@
 #!/usr/bin/env python3
-
-"""This module implements session authentication that is saved in database."""
+"""Session authentication with expiration
+and storage support module for the API.
+"""
+from flask import request
 from datetime import datetime, timedelta
-from typing import TypeVar, Union
 
-from api.v1.auth.session_exp_auth import SessionExpAuth
-from models.user_session import UserSession as DBUserSession
-
-UserSession = TypeVar("UserSession")
+from models.user_session import UserSession
+from .session_exp_auth import SessionExpAuth
 
 
 class SessionDBAuth(SessionExpAuth):
-    """Implement Session Authentication with data persistence."""
+    """Session authentication class with expiration and storage support.
+    """
 
-    @staticmethod
-    def get_db_session(session_id: str) -> Union[UserSession, None]:
-        """Return the UserSession based on the `session_id`."""
-        if not session_id:
-            return None
+    def create_session(self, user_id=None) -> str:
+        """Creates and stores a session id for the user.
+        """
+        session_id = super().create_session(user_id)
+        if type(session_id) == str:
+            kwargs = {
+                'user_id': user_id,
+                'session_id': session_id,
+            }
+            user_session = UserSession(**kwargs)
+            user_session.save()
+            return session_id
 
+    def user_id_for_session_id(self, session_id=None):
+        """Retrieves the user id of the user associated with
+        a given session id.
+        """
         try:
-            session: UserSession = DBUserSession.search(
-                {"session_id": session_id}
-            )[0]
-        except (KeyError, IndexError):
+            sessions = UserSession.search({'session_id': session_id})
+        except Exception:
             return None
-
-        return session
-
-    def create_session(self, user_id: str = None) -> Union[str, None]:
-        """
-        Create a user session and save the detail in a persistent
-        storage.
-
-        Args:
-            user_id (str): The ID of the user to create the session for.
-
-        Returns:
-            str | None: The session ID is returned if everything goes
-            alright, else None is returned if an invalid user ID was given.
-        """
-        session_id: Union[str, None] = super().create_session(user_id=user_id)
-        if not session_id:
+        if len(sessions) <= 0:
             return None
-
-        session = DBUserSession(
-            session_id=session_id, user_id=user_id, id=session_id
-        )
-        session.save()
-
-        return session.session_id
-
-    def user_id_for_session_id(
-        self, session_id: str = None
-    ) -> Union[str, None]:
-        """Return the User ID representing the UserSession in the database
-        based on the `session_id`."""
-        session = self.get_db_session(session_id=session_id)
-        if not session:
+        cur_time = datetime.now()
+        time_span = timedelta(seconds=self.session_duration)
+        exp_time = sessions[0].created_at + time_span
+        if exp_time < cur_time:
             return None
-
-        if self.session_duration <= 0:
-            return session.user_id
-
-        if not session.created_at:
-            return None
-
-        if datetime.now() > session.created_at + timedelta(
-            seconds=self.session_duration
-        ):
-            return None
-
-        return session.user_id
+        return sessions[0].user_id
 
     def destroy_session(self, request=None) -> bool:
-        """Delete user session from database."""
-        if not request:
+        """Destroys an authenticated session.
+        """
+        session_id = self.session_cookie(request)
+        try:
+            sessions = UserSession.search({'session_id': session_id})
+        except Exception:
             return False
-
-        session_id = self.session_cookie(request=request)
-        if not session_id:
+        if len(sessions) <= 0:
             return False
-
-        user_id = self.user_id_for_session_id(session_id=session_id)
-        if not user_id:
-            return False
-
-        session = self.get_db_session(session_id=session_id)
-        if not session:
-            return False
-
-        session.remove()
+        sessions[0].remove()
         return True
